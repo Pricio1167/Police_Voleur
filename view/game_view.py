@@ -276,7 +276,7 @@ class PoliceVoleurView:
         )
         self.draw_text(
             left, self.height * 0.48,
-            "Une partie en local, à deux.",
+            "À deux sur ce PC ou sur le même réseau.",
             size=15, color=self.palette["muted"], anchor="w",
         )
 
@@ -284,8 +284,16 @@ class PoliceVoleurView:
         menu_y = self.height * 0.62
         gap = 58
         self.draw_button(
-            menu_x, menu_y, 260, 52, "JOUER", self.controller.new_game,
+            menu_x, menu_y, 260, 52, "JOUER SUR CE PC", self.controller.new_game,
             primary=True, font_size=13,
+        )
+        self.draw_button(
+            menu_x + 276, menu_y, 180, 52, "HÉBERGER (POLICE)",
+            self.controller.host_game,
+        )
+        self.draw_button(
+            menu_x + 276, menu_y + gap, 180, 48, "REJOINDRE (VOLEUR)",
+            self.controller.join_game,
         )
         self.draw_button(
             menu_x, menu_y + gap, 260, 48, "PARAMÈTRES", self.show_settings,
@@ -294,7 +302,7 @@ class PoliceVoleurView:
             menu_x, menu_y + gap * 2, 260, 48, "COMMENT JOUER", self.show_how_to_play,
         )
         self.draw_button(
-            menu_x, menu_y + gap * 3, 260, 48, "QUITTER", self.root.destroy,
+            menu_x, menu_y + gap * 3, 260, 48, "QUITTER", self.controller.quit,
         )
 
         board_x = self.width * 0.73
@@ -561,7 +569,7 @@ class PoliceVoleurView:
                 x + 82, card_y + 45, description, size=10,
                 color=self.palette["muted"], anchor="w",
             )
-        self.draw_button(32, 34, 128, 42, "←  RETOUR", self.controller.show_menu)
+        self.draw_button(32, 34, 128, 42, "←  RETOUR", self.leave_rules)
 
     def draw_game(self):
         self.width = max(self.canvas.winfo_width(), 800)
@@ -575,8 +583,13 @@ class PoliceVoleurView:
         left_x = 28
         right_x = self.width - left_x - panel_width
 
+        title = {
+            None: "PARTIE LOCALE",
+            "police": "PARTIE LAN  /  VOUS ÊTES LA POLICE",
+            "thief": "PARTIE LAN  /  VOUS ÊTES LE VOLEUR",
+        }[self.controller.lan_role]
         self.draw_text(
-            self.center_x, 31, "PARTIE LOCALE", size=10,
+            self.center_x, 31, title, size=10,
             color=self.palette["muted"], weight="bold",
         )
         self.draw_text(
@@ -653,8 +666,8 @@ class PoliceVoleurView:
             status = "VAINQUEUR" if self.game.winner == player else "EN ATTENTE"
         elif self.game.phase == "setup":
             status = "EN ATTENTE"
-        elif self.game.current_player == player:
-            status = "À VOUS DE JOUER"
+        elif self.game.current_player == player and not self.controller.lan_status:
+            status = "À VOUS DE JOUER" if self.controller.can_play else "TOUR DU VOLEUR"
         else:
             status = "EN ATTENTE"
         self.draw_status_badge(center_x, y + 187, width - 28, status, color)
@@ -697,10 +710,12 @@ class PoliceVoleurView:
         )
         if self.game.phase == "finished":
             status = "VAINQUEUR" if self.game.winner == "police" else "EN ATTENTE"
+        elif self.controller.lan_status:
+            status = "EN ATTENTE"
         elif self.game.phase == "setup":
-            status = "À VOUS DE PLACER"
+            status = "À VOUS DE PLACER" if self.controller.can_play else "PLACEMENT"
         elif self.game.current_player == "police":
-            status = "À VOUS DE JOUER"
+            status = "À VOUS DE JOUER" if self.controller.can_play else "TOUR DE LA POLICE"
         else:
             status = "EN ATTENTE"
         self.draw_status_badge(
@@ -776,7 +791,7 @@ class PoliceVoleurView:
             x, y = self.point_on_canvas(node)
             if node in destinations:
                 fill, point_radius = self.palette["good"], 7
-            elif self.game.phase == "setup":
+            elif self.game.phase == "setup" and self.controller.can_play:
                 placed = sum(cop is not None for cop in self.game.cops)
                 allowed = self.game.inner_nodes if placed == 0 else self.game.boundary_nodes
                 fill = self.palette["accent"] if node in allowed else self.palette["line"]
@@ -873,13 +888,17 @@ class PoliceVoleurView:
         return closest
 
     def game_status(self):
-        if self.game.phase == "setup":
-            placed = sum(cop is not None for cop in self.game.cops)
-            return "Placez le policier " + str(placed + 1) + " / 3"
-        elif self.game.phase == "finished":
+        if self.game.phase == "finished":
             if self.game.winner == "thief":
                 return "Le voleur remporte la partie."
             return "La police remporte la partie."
+        if self.controller.lan_status:
+            return self.controller.lan_status
+        if not self.controller.can_play:
+            return "En attente du coup de l’autre joueur."
+        if self.game.phase == "setup":
+            placed = sum(cop is not None for cop in self.game.cops)
+            return "Placez le policier " + str(placed + 1) + " / 3"
         return "Sélectionnez un pion puis sa destination."
 
     def turn_hint(self):
@@ -912,7 +931,12 @@ class PoliceVoleurView:
         self.draw_screen()
 
     def show_how_to_play(self):
+        self.rules_return_screen = self.screen
         self.screen = "how_to_play"
+        self.draw_screen()
+
+    def leave_rules(self):
+        self.screen = self.rules_return_screen
         self.draw_screen()
 
     def set_theme(self, theme):
