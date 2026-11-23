@@ -19,7 +19,9 @@ class LanGameTest(unittest.TestCase):
         police.lan_role = "police"
         thief.lan_role = "thief"
         for player in (police, thief):
-            self.assertEqual(player.lan.events.get(timeout=3), ("ready", None))
+            event, role = player.lan.events.get(timeout=3)
+            self.assertEqual(event, "ready")
+            self.assertEqual(role, "thief" if player is police else "police")
 
         thief.handle_board_click("I_S")
         self.assertEqual(thief.game.cops, [None, None, None])
@@ -39,8 +41,32 @@ class LanGameTest(unittest.TestCase):
         self.assertEqual(police.game.thief, thief.game.thief)
         self.assertTrue(thief.can_play)
 
+        police.request_restart()
+        event, action = thief.lan.events.get(timeout=3)
+        self.assertEqual(event, "action")
+        self.assertTrue(thief.receive_action(action))
+        self.assertEqual(thief.game.phase, "play")
+        self.assertTrue(thief.peer_restart_requested)
+
+        thief.request_restart()
+        self.deliver_action(police)
+        self.assertEqual(police.game.phase, "setup")
+        self.assertEqual(thief.game.phase, "setup")
+
         police.close_lan()
         self.assertEqual(thief.lan.events.get(timeout=3)[0], "error")
+
+    def test_first_player_can_choose_either_role(self):
+        police = LanSession(port=0, role="thief")
+        self.addCleanup(police.close)
+        thief_port = police.listener.getsockname()[1]
+        other = LanSession("127.0.0.1", thief_port)
+        self.addCleanup(other.close)
+
+        self.assertEqual(police.events.get(timeout=3), ("ready", "police"))
+        self.assertEqual(other.events.get(timeout=3), ("ready", "thief"))
+        self.assertEqual(police.role, "thief")
+        self.assertEqual(other.role, "police")
 
     def deliver_action(self, player):
         event, action = player.lan.events.get(timeout=3)

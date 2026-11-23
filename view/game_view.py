@@ -196,6 +196,8 @@ class PoliceVoleurView:
         self.draw_background()
         if self.screen == "menu":
             self.draw_menu()
+        elif self.screen == "local_modes":
+            self.draw_local_modes()
         elif self.screen == "settings":
             self.draw_settings()
         elif self.screen == "appearance":
@@ -276,7 +278,7 @@ class PoliceVoleurView:
         )
         self.draw_text(
             left, self.height * 0.48,
-            "À deux sur ce PC ou sur le même réseau.",
+            "Contre l’ordinateur ou sur le même réseau.",
             size=15, color=self.palette["muted"], anchor="w",
         )
 
@@ -284,15 +286,15 @@ class PoliceVoleurView:
         menu_y = self.height * 0.62
         gap = 58
         self.draw_button(
-            menu_x, menu_y, 260, 52, "JOUER SUR CE PC", self.controller.new_game,
+            menu_x, menu_y, 260, 52, "JOUER SUR CE PC", self.show_local_modes,
             primary=True, font_size=13,
         )
         self.draw_button(
-            menu_x + 276, menu_y, 180, 52, "HÉBERGER (POLICE)",
+            menu_x + 276, menu_y, 180, 52, "HÉBERGER",
             self.controller.host_game,
         )
         self.draw_button(
-            menu_x + 276, menu_y + gap, 180, 48, "REJOINDRE (VOLEUR)",
+            menu_x + 276, menu_y + gap, 180, 48, "REJOINDRE",
             self.controller.join_game,
         )
         self.draw_button(
@@ -313,6 +315,54 @@ class PoliceVoleurView:
             board_x, self.height * 0.88, "DEUX JOUEURS  /  UN PLATEAU",
             size=10, color=self.palette["muted"], anchor="center",
         )
+
+    def draw_local_modes(self):
+        self.draw_button(32, 34, 128, 42, "←  RETOUR", self.show_menu)
+        center_x = self.width / 2
+        self.draw_text(
+            center_x, self.height * 0.22, "CHOISISSEZ VOTRE MODE",
+            size=24, weight="bold",
+        )
+        self.draw_text(
+            center_x, self.height * 0.28,
+            "Jouez seul contre l’ordinateur ou à deux sur cet écran.",
+            size=12, color=self.palette["muted"],
+        )
+
+        card_width = min(300, self.width * 0.36)
+        card_height = 230
+        gap = 28
+        left = (self.width - card_width * 2 - gap) / 2
+        top = self.height * 0.37
+        for x, title, description, label, action in (
+            (
+                left,
+                "SOLO",
+                "Affrontez l’ordinateur, qui choisit ses coups avec minimax.",
+                "JOUER EN SOLO",
+                self.controller.new_game,
+            ),
+            (
+                left + card_width + gap,
+                "MULTIJOUEUR",
+                "Deux joueurs se partagent le même ordinateur et jouent à tour de rôle.",
+                "JOUER À DEUX",
+                self.controller.start_local_multiplayer,
+            ),
+        ):
+            self.draw_card(x, top, card_width, card_height, self.palette["surface"])
+            self.draw_text(
+                x + card_width / 2, top + 55, title,
+                size=17, weight="bold", color=self.palette["accent"],
+            )
+            self.draw_text(
+                x + card_width / 2, top + 105, description,
+                size=11, color=self.palette["muted"], width=card_width - 42,
+            )
+            self.draw_button(
+                x + 24, top + 160, card_width - 48, 46, label,
+                action, primary=title == "SOLO",
+            )
 
     def draw_decorative_board(self, cx, cy, radius):
         self.center_x, self.center_y, self.radius = cx, cy, radius
@@ -584,10 +634,22 @@ class PoliceVoleurView:
         right_x = self.width - left_x - panel_width
 
         title = {
-            None: "PARTIE LOCALE",
+            "local": (
+                "PARTIE SOLO  /  VS ORDINATEUR"
+                if self.controller.local_role is not None
+                else (
+                    "MULTIJOUEUR LOCAL"
+                    if self.controller.local_multiplayer else "PARTIE LOCALE"
+                )
+            ),
+            "connecting": "PARTIE LAN  /  CONNEXION",
             "police": "PARTIE LAN  /  VOUS ÊTES LA POLICE",
             "thief": "PARTIE LAN  /  VOUS ÊTES LE VOLEUR",
-        }[self.controller.lan_role]
+        }[
+            self.controller.lan_role or (
+                "connecting" if self.controller.lan is not None else "local"
+            )
+        ]
         self.draw_text(
             self.center_x, 31, title, size=10,
             color=self.palette["muted"], weight="bold",
@@ -634,14 +696,20 @@ class PoliceVoleurView:
             right_x, panel_y, panel_width, panel_height
         )
 
-        controls_width = 286
+        controls_width = 434
         controls_x = self.center_x - controls_width / 2
         controls_y = self.height - 58
         self.draw_button(
-            controls_x, controls_y, 126, 40, "MENU", self.controller.show_menu,
+            controls_x, controls_y, 144, 40,
+            "ACCEPTER" if self.controller.peer_restart_requested else "RECOMMENCER",
+            self.controller.request_restart,
         )
         self.draw_button(
-            controls_x + 140, controls_y, 146, 40, "COMMENT JOUER",
+            controls_x + 154, controls_y, 100, 40, "MENU",
+            self.controller.show_menu,
+        )
+        self.draw_button(
+            controls_x + 264, controls_y, 170, 40, "COMMENT JOUER",
             self.show_how_to_play,
         )
 
@@ -888,13 +956,21 @@ class PoliceVoleurView:
         return closest
 
     def game_status(self):
+        if self.controller.restart_requested:
+            return "En attente de l’accord de l’autre joueur."
+        if self.controller.peer_restart_requested:
+            return "L’autre joueur propose de recommencer."
         if self.game.phase == "finished":
             if self.game.winner == "thief":
                 return "Le voleur remporte la partie."
             return "La police remporte la partie."
         if self.controller.lan_status:
             return self.controller.lan_status
+        if self.game.phase == "setup" and self.controller.local_role == "thief":
+            return "L’ordinateur place la police."
         if not self.controller.can_play:
+            if self.controller.local_role is not None:
+                return "L’ordinateur réfléchit…"
             return "En attente du coup de l’autre joueur."
         if self.game.phase == "setup":
             placed = sum(cop is not None for cop in self.game.cops)
@@ -903,9 +979,11 @@ class PoliceVoleurView:
 
     def turn_hint(self):
         if self.game.phase == "setup":
+            if self.controller.local_role == "thief":
+                return "L’ordinateur place la police."
             return "Choisissez une intersection libre."
         if self.game.phase == "finished":
-            return "Relancez une partie ou retournez au menu."
+            return "Recommencez ou retournez au menu."
         return "Cliquez sur un pion, puis sur un point vert."
 
     def present_game(self, game, selected_node, notice):
@@ -915,10 +993,14 @@ class PoliceVoleurView:
         self.screen = "game"
         self.draw_screen()
 
-    def show_menu(self, selected_node, notice):
+    def show_menu(self, selected_node=None, notice=""):
         self.selected_node = selected_node
         self.notice = notice
         self.screen = "menu"
+        self.draw_screen()
+
+    def show_local_modes(self):
+        self.screen = "local_modes"
         self.draw_screen()
 
     def set_game_feedback(self, selected_node, notice):
